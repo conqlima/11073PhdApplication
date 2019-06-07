@@ -32,6 +32,7 @@ private:
     unsigned int my_plugin_number;
     unsigned int numPlugin;
     unsigned int numNodes;
+    bool managerInitiated;
 
     //variables below are used to determine the packet delivery rates.
     map<long,int> packetsReceived;

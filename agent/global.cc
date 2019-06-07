@@ -103,7 +103,7 @@ void device_connected(Context *ctx, const char *addr)
 void castalia_mode(unsigned int nodeNumber)
 {
     int port = 0;
-    CONTEXT_ID.plugin = 1;
-    CONTEXT_ID.connid = port;
+    CONTEXT_ID.plugin = 1;//no effect in Castalia Application
+    CONTEXT_ID.connid = port;//no effect in Castalia Application
     plugin_network_castalia_agent_setup(&comm_plugin[nodeNumber], port);
 }

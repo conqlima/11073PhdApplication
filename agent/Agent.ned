@@ -9,13 +9,17 @@ simple Agent like node.application.iApplication
 		int constantDataPayload = default(16);	// in bytes
 		
 		string application_type = default("pulseoximeter"); // agent types
-		double reading_rate = default(4); // measurement per second
+		double measurements_per_second = default(4); // measurement per second
 		bool confirmed_event = default(false);
 		int maxNumOfRetransmition = default(3); // max Number of retransmission of
 												// measurement packets
 		double timeOutToRetransmitPacket = default(3);
 		int hubNode = default (0);		// explict the hub (sink node) node number
-		bool retransmissionPacket = default(false);
+		bool retransmitPacket = default(false);
+		bool managerInitiated = default(false);
+		string managerInitiateMode @enum("singleMode", "timePeriodMode", "noTimePeriodMode") = default("singleMode");
+		double managerInitiatedTime = default(0);
+		double numberOfReceivedMeasurementsToSendStop = default(0);
 		
 		//copied from ThroughputTest.ned
 		

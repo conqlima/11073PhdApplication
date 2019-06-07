@@ -2,6 +2,7 @@
 #define _AGENT_H_
 
 extern "C" {
+#include "communication/agent_ops.h"
 #include "communication/plugin/plugin.h"
 #include "communication/communication.h"
 #include "communication/context_manager.h"
@@ -14,6 +15,7 @@ extern "C" {
 #include "specializations/basic_ECG.h"
 #include "ieee11073.h"
 #include "agent.h"
+#include "manager.h"
 #include "util/log.h"
 }
 
@@ -50,6 +52,8 @@ private:
     double reading_rate;
     double maxSimTime;
     double timeOutToRetransmitPacket;
+    double managerInitiatedTime;
+    //double numberOfReceivedMeasurementsToSendStop;
     float packet_spacing;
     float data_spacing;
     int dataSN;
@@ -64,11 +68,13 @@ private:
     int isTheFirstAssociation;
     bool confirmed_event;
     bool retransmissionPacket;
+    bool managerInitiated;
     unsigned int my_plugin_number;
     unsigned int opt;
     unsigned int nodeNumber;
     string recipientAddress;
     string application_name;
+    string managerInitiatedMode;
     void* (*event_report_cb)();
     //MyPacket *pktGlobal;
 
@@ -84,8 +90,10 @@ protected:
     void timerFiredCallback(int);
     void finishSpecific();
     MyPacket* createDataPacket(int seqNum);
-    void tryNewAssociation(void);
+    void tryNewAssociationForTimeout(void);
+    void tryNewAssociationForAbort(void);
     void retransmitPacket(void);
+    void updateTimeOutToRetransmitPacket(double);
 
 public:
     int getPacketsSent(int addr)

@@ -44,6 +44,8 @@ extern "C" {
 #include "util/ioutil.h"
 #include "manager.h"
 #include "dim/nomenclature.h"
+#include "communication/parser/decoder_ASN1.h"
+#include "communication/parser/encoder_ASN1.h"
 }
 
 #include "MyPacket_m.h"
@@ -149,18 +151,22 @@ static int m_network_castalia_wait_for_data(Context *ctx)
  */
 static void m_message_type(intu8 * buffer, int size, Context* ctx)
 {
-    unsigned int nodeId = (ctx->id.plugin+1) / 2;
-    intu8 * bufferTmp = (intu8 *) calloc(size, sizeof(intu8));
-    intu8 * initial_address = bufferTmp;
+    unsigned int nodeId = (ctx->id.plugin) / 2;
+    intu8 * bufferCopy = (intu8 *) calloc(size, sizeof(intu8));
+    intu8 * initial_address = bufferCopy;
     for (int i = 0; i < size; i++)
     {
-        bufferTmp[i] = buffer[i];
+        bufferCopy[i] = buffer[i];
     }
-    intu16 choice;
-    choice = ntohs(*((uint16_t *) bufferTmp));
-    bufferTmp += 8;
 
-    switch (choice)
+    ByteStreamReader *streamCopy = byte_stream_reader_instance(bufferCopy, size);
+
+
+    int error = 0;
+    APDU apdu;
+    decode_apdu(streamCopy, &apdu, &error);
+
+    switch (apdu.choice)
     {
     case AARQ_CHOSEN:
         m_st_msg[nodeId].msgType.push("Association Request");
@@ -184,44 +190,44 @@ static void m_message_type(intu8 * buffer, int size, Context* ctx)
         break;
     case PRST_CHOSEN:
     {
-        choice = ntohs(*((uint16_t *) bufferTmp));
+        DATA_apdu * data_apdu = encode_get_data_apdu(&(apdu.u.prst));
 
-        switch (choice)
+        switch (data_apdu->message.choice)
         {
         case ROIV_CMIP_EVENT_REPORT_CHOSEN:
         {
-            /*uncomment if you want event type*/
-            //bufferTmp += 10;
-            //choice = ntohs(*((uint16_t *) bufferTmp));
-            //int dec;
-            //std::stringstream streamc;
-            //streamc << choice;
-            //streamc >> std::dec >> dec;
-            //if (dec == MDC_NOTI_CONFIG){
-            //m_st_msg[nodeId].msgType.push("Configuration with no confirmation");
-            //}else{
-            //m_st_msg[nodeId].msgType.push("Measurement with no confirmation");
-            //}
-            m_st_msg[nodeId].msgType.push("Measurement with no confirmation");
-            m_measurementPackets[nodeId]++;
+            switch (data_apdu->message.u.roiv_cmipEventReport.event_type)
+            {
+                case MDC_NOTI_SCAN_REPORT_FIXED:{
+                    m_st_msg[nodeId].msgType.push("Measurement with no confirmation");
+                    m_measurementPackets[nodeId]++;
+                    break;
+                }
+                /*case for others actions type TO DO*/
+                default:{
+                    m_st_msg[nodeId].msgType.push("unknown event type");
+                    m_measurementPackets[nodeId]++;
+                    break;
+                }
+            }
             break;
         }
         case ROIV_CMIP_CONFIRMED_EVENT_REPORT_CHOSEN:
         {
-            /*uncomment if you want event type*/
-            //bufferTmp += 10;
-            //choice = ntohs(*((uint16_t *) bufferTmp));
-            //int dec;
-            //std::stringstream streamc;
-            //streamc << choice;
-            //streamc >> std::dec >> dec;
-            //if (dec == MDC_NOTI_CONFIG){
-            //m_st_msg[nodeId].msgType.push("Configuration with confirmation");
-            //}else{
-            //m_st_msg[nodeId].msgType.push("Measurement with confirmation");
-            //}
-            m_st_msg[nodeId].msgType.push("Measurement with confirmation");
-            m_measurementPackets[nodeId]++;
+            switch (data_apdu->message.u.roiv_cmipConfirmedEventReport.event_type)
+            {
+                case MDC_NOTI_SCAN_REPORT_FIXED:{
+                    m_st_msg[nodeId].msgType.push("Measurement with confirmation");
+                    m_measurementPackets[nodeId]++;
+                    break;
+                }
+                /*case for others actions type TO DO*/
+                default:{
+                    m_st_msg[nodeId].msgType.push("unknown event type");
+                    m_measurementPackets[nodeId]++;
+                    break;
+                }
+            }
             break;
         }
         case ROIV_CMIP_GET_CHOSEN:
@@ -237,29 +243,71 @@ static void m_message_type(intu8 * buffer, int size, Context* ctx)
             m_controlPackets[nodeId]++;
             break;
         case ROIV_CMIP_ACTION_CHOSEN:
-            m_st_msg[nodeId].msgType.push("ACTION with no confirmation");
-            m_controlPackets[nodeId]++;
+            switch (data_apdu->message.u.roiv_cmipAction.action_type)
+            {
+                case MDC_ACT_DATA_REQUEST:{
+                    intu8 *actionBuffer = data_apdu->message.u.roiv_cmipAction.action_info_args.value;
+		            intu16 actionLength = data_apdu->message.u.roiv_cmipAction.action_info_args.length;
+		            ByteStreamReader *actionStream = byte_stream_reader_instance(actionBuffer, actionLength);
+		            DataRequest *request = (DataRequest *)calloc(1, sizeof(DataRequest));
+		            decode_datarequest(actionStream, request, &error);
+                    //star bit set
+                    if (request->data_req_mode >> 15)
+                        m_st_msg[nodeId].msgType.push("ACTION with no confirmation -  manager request measurements");
+                    //start bit not set
+                    else
+                        m_st_msg[nodeId].msgType.push("ACTION with no confirmation -  manager request to stop sending measurements");
+                    m_controlPackets[nodeId]++;
+                    break;
+                }
+                /*case for others actions type TO DO*/
+                default:
+                    m_st_msg[nodeId].msgType.push("unknown action type");
+                    m_controlPackets[nodeId]++;
+                break;
+            }
             break;
         case ROIV_CMIP_CONFIRMED_ACTION_CHOSEN:
-            m_st_msg[nodeId].msgType.push("ACTION with confirmation");
-            m_controlPackets[nodeId]++;
+            switch (data_apdu->message.u.roiv_cmipConfirmedAction.action_type)
+            {
+                case MDC_ACT_DATA_REQUEST:{
+                    intu8 *actionBuffer = data_apdu->message.u.roiv_cmipConfirmedAction.action_info_args.value;
+		            intu16 actionLength = data_apdu->message.u.roiv_cmipConfirmedAction.action_info_args.length;
+		            ByteStreamReader *actionStream = byte_stream_reader_instance(actionBuffer, actionLength);
+		            DataRequest *request = (DataRequest *)calloc(1, sizeof(DataRequest));
+		            decode_datarequest(actionStream, request, &error);
+                    //star bit set
+                    if (request->data_req_mode >> 15)
+                        m_st_msg[nodeId].msgType.push("ACTION with confirmation -  manager request measurements");
+                    //start bit not set
+                    else
+                        m_st_msg[nodeId].msgType.push("ACTION with confirmation -  manager request to stop sending measurements");
+                    m_controlPackets[nodeId]++;
+                    break;
+                }
+                /*case for others actions type TO DO*/
+                default:
+                    m_st_msg[nodeId].msgType.push("unknown action type");
+                    m_controlPackets[nodeId]++;
+                break;
+            }
             break;
         case RORS_CMIP_CONFIRMED_EVENT_REPORT_CHOSEN:
         {
-            /*uncomment if you want event type*/
-            //bufferTmp += 10;
-            //choice = ntohs(*((uint16_t *) bufferTmp));
-            //int dec;
-            //std::stringstream streamc;
-            //streamc << choice;
-            //streamc >> std::dec >> dec;
-            //if (dec == MDC_NOTI_CONFIG){
-            //m_st_msg[nodeId].msgType.push("response of a configuration with confirmation");
-            //}else{
-            //m_st_msg[nodeId].msgType.push("response of a measurement with confirmation");
-            //}
-            m_st_msg[nodeId].msgType.push("response of a measurement with confirmation");
-            m_controlPackets[nodeId]++;
+            switch (data_apdu->message.u.rors_cmipConfirmedEventReport.event_type)
+            {
+                case MDC_NOTI_SCAN_REPORT_FIXED:{
+                    m_st_msg[nodeId].msgType.push("response of a measurement with confirmation");
+                    m_controlPackets[nodeId]++;
+                    break;
+                }
+                /*case for others actions type TO DO*/
+                default:{
+                    m_st_msg[nodeId].msgType.push("unknown event type");
+                    m_controlPackets[nodeId]++;
+                    break;
+                }
+            }
             break;
         }
         case RORS_CMIP_GET_CHOSEN:
