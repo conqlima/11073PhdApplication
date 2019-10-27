@@ -22,12 +22,17 @@ void Agent::startup()
     HUBNODE = par("hubNode");
     retransmissionPacket = par("retransmitPacket");
     timeOutToRetransmitPacket = par("timeOutToRetransmitPacket");
+    dinamicTimeout = par("dinamicTimeout");
     maxNumOfRetransmition = par("maxNumOfRetransmition");
     confirmed_event = par("confirmed_event");
     packet_rate = par("packet_rate");
     managerInitiated = par("managerInitiated");
     managerInitiatedMode = par("managerInitiateMode").stringValue();
     managerInitiatedTime = par("managerInitiatedTime");
+    dinamicTimeoutMean = 0;
+    dinamicTimeoutMeanCount = 0;
+    initialTime = 0;
+    errorOccurred = false;
 
     //Node 0 is always the next recipient
     recipientAddress = par("nextRecipient").stringValue();
@@ -421,18 +426,25 @@ void Agent::fromNetworkLayer(ApplicationPacket *rcvPacketa,
                     dataSN++;
                     agent_send_data(CONTEXT_ID);
 
-                    updateTimeOutToRetransmitPacket(SIMTIME_DBL(simTime() - rcvPacket->getCreationTime()));
-
                     //After an associantion, a packet is sent with no timeout
                     if (getNumberOfAssociationsTotal(nodeNumber) > isTheFirstAssociation)
                     {
                         //The first measurement send after a association
+                        //timeOutToRetransmitPacket = 0.4;
                         setTimer(SEND_PACKET, 0);
                         isTheFirstAssociation = getNumberOfAssociationsTotal(nodeNumber);
                     }
                     else
+                    {
+                        simtime_t currentTime = simTime();
+                        simtime_t t = currentTime - initialTime;
+                        if(dinamicTimeout && !errorOccurred)
+                            updateTimeOutToRetransmitPacket(SIMTIME_DBL(t));
+                        
                         setTimer(SEND_PACKET, data_spacing);
-
+                        errorOccurred = false;
+                    }
+                    //initialTime = SIMTIME_DBL(simTime());
                     --alarmt;
                 }
                 //Manager-initiated and Agent-initiated mode: request association release
@@ -462,6 +474,7 @@ void Agent::fromNetworkLayer(ApplicationPacket *rcvPacketa,
                 //Manager-initiated and Agent-initiated mode:
                 else //associantion abort received
                 {
+                    errorOccurred = true;
                     if ((ctx->fsm->state == fsm_state_unassociated || ctx->fsm->state == fsm_state_associating) && alarmt >= 0)
                     {
                         tryNewAssociationForAbort();
@@ -502,7 +515,10 @@ void Agent::timerFiredCallback(int index)
             trace() << "type: " << st_msg[nodeNumber].msgType.front();
             st_msg[nodeNumber].msgType.pop();
         }
-        toNetworkLayer(createDataPacket(dataSN), recipientAddress.c_str());
+        MyPacket *pkt = createDataPacket(dataSN);
+        toNetworkLayer(pkt, recipientAddress.c_str());
+        //initialTime = SIMTIME_DBL(simTime());
+        initialTime = pkt->getCreationTime();
         packetsSent[recipientId]++;
         fsm_states c = ctx->fsm->state;
 
@@ -533,8 +549,9 @@ void Agent::timerFiredCallback(int index)
                 //3 new associations can be made now
                 RC = RC_COUNT;
 
-                if (retransmissionPacket)
+                if (retransmissionPacket){
                     setTimer(TO_OPERA, timeOutToRetransmitPacket);
+                }
                 else
                     setTimer(TO_OPERA, 3);
 
@@ -579,6 +596,7 @@ void Agent::timerFiredCallback(int index)
 
     case TO_ASSOC:
     {
+        errorOccurred = true;
         /**
          * Try 3 association, if manager does not
          * respond, abort.
@@ -620,6 +638,7 @@ void Agent::timerFiredCallback(int index)
 
     case TO_OPERA:
     {
+        errorOccurred = true;
         trace() << "response not received for packet #" << dataSN << " in operating mode";
 
         /**
@@ -632,6 +651,7 @@ void Agent::timerFiredCallback(int index)
         if ((numOfRetransmissions < maxNumOfRetransmition) && retransmissionPacket)
         {
             retransmitPacket();
+            //initialTime = SIMTIME_DBL(simTime());
             numOfRetransmissions++;
             setTimer(TO_OPERA, timeOutToRetransmitPacket);
         }
@@ -671,6 +691,8 @@ void Agent::finishSpecific()
     declareOutput("Measurement Packets Sent");
     declareOutput("Total of associations made");
 
+    declareOutput("Timeout to retransmit mean");
+
     // temp variable to access packets received by other nodes
     // cTopology *topo;
     // topo = new cTopology("topo");
@@ -702,6 +724,7 @@ void Agent::finishSpecific()
     collectOutput("Measurement Packets Sent", HUBNODE, "", getMeasurementPacketsTotal(nodeNumber));
     collectOutput("Total of associations made", HUBNODE, "", getNumberOfAssociationsTotal(nodeNumber));
 
+    collectOutput("Timeout to retransmit mean", HUBNODE, "", dinamicTimeoutMean/dinamicTimeoutMeanCount);
     //delete (topo);
     long bytesDelivered = getBytesReceived(nodeNumber); 
     if (bytesDelivered > 0)
@@ -863,10 +886,38 @@ void Agent::retransmitPacket(void)
     trace() << "resending packet #" << dataSN << " to node " << recipientAddress.c_str();
     //toNetworkLayer(pktGlobal, recipientAddress.c_str());
     toNetworkLayer(createDataPacket(dataSN), recipientAddress.c_str());
+    //initialTime = SIMTIME_DBL(simTime());
     packetsSent[recipientId]++;
     //collectOutput("Number of transmissions retries per packet", dataSN);
 }
 
-void Agent::updateTimeOutToRetransmitPacket(double t){
-    timeOutToRetransmitPacket = t * 1000;
+void Agent::updateTimeOutToRetransmitPacket(double SampleRTT)
+{
+        //Limite superior de timeout
+        if(SampleRTT > 3.0)
+            SampleRTT = 3.0; //timeout do padrão X73-PHD
+        
+        //the first estimated timeout use values from the first sampertt
+        if(dinamicTimeoutMeanCount == 0)
+        {
+            EstimatedRTT = SampleRTT;
+            DevRTT = SampleRTT/2;
+        }
+
+        EstimatedRTT = (1 - ALFA) * EstimatedRTT + ALFA*SampleRTT;
+        DevRTT = (1 - BETA) * DevRTT + BETA * abs(SampleRTT - EstimatedRTT);
+        timeOutToRetransmitPacket = EstimatedRTT + 4 * DevRTT;
+
+        //folga
+        timeOutToRetransmitPacket = timeOutToRetransmitPacket * 2;
+
+        // timeOutToRetransmitPacket = t * 100;
+        // if (timeOutToRetransmitPacket > 3)
+        // timeOutToRetransmitPacket = 0.4;
+        // else if (timeOutToRetransmitPacket < 0.09)
+        // timeOutToRetransmitPacket = 0.4;
+        
+        dinamicTimeoutMean = dinamicTimeoutMean + timeOutToRetransmitPacket;
+        dinamicTimeoutMeanCount++;
+        
 }

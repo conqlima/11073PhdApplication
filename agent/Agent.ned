@@ -11,9 +11,10 @@ simple Agent like node.application.iApplication
 		string application_type = default("pulseoximeter"); // agent types
 		double measurements_per_second = default(4); // measurement per second
 		bool confirmed_event = default(false);
+		bool dinamicTimeout = default(false);
 		int maxNumOfRetransmition = default(3); // max Number of retransmission of
 												// measurement packets
-		double timeOutToRetransmitPacket = default(3);
+		double timeOutToRetransmitPacket = default(0.4);
 		int hubNode = default (0);		// explict the hub (sink node) node number
 		bool retransmitPacket = default(false);
 		bool managerInitiated = default(false);
