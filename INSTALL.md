@@ -5,7 +5,9 @@ First of all, install the Castalia Simulator https://github.com/boulis/Castalia;
 So, install the Antidote Library modified to work on Castalia Simulator https://github.com/conqlima/Antidote;
 
   * Download the agent, manager, and MyPacket.msg from [this](https://github.com/conqlima/11073PhdApplication) repository and copy them to **Castalia/src/node/application**;
-
+  
+  * Insert this line ``EXTOPTS="-I/usr/local/include/antidote -L/usr/local/lib -lantidote"`` to makemake file in Castalia root directory.
+  
   * Compile Castalia with:
     * make clean
     * ./makemake
